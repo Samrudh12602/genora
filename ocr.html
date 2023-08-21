@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OCR Page</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background-color: #f2f2f2;
+        }
+
+        .top-menu {
+            background-color: #333;
+            padding: 10px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .top-menu a {
+            color: #fff;
+            text-decoration: none;
+            padding: 5px 10px;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+
+        .top-menu a:hover {
+            background-color: #555;
+        }
+
+        .container {
+            text-align: center;
+            padding: 30px;
+            background-color: #fff;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            width: 70%;
+            max-width: 600px;
+            margin: auto;
+            margin-top: 20px;
+        }
+
+        h1 {
+            color: #333;
+        }
+
+        #searchQuery {
+            width: 100%;
+            padding: 10px;
+            margin-top: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+
+        #submitBtn {
+            background-color: #007bff;
+            color: #fff;
+            border: none;
+            margin:16px;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        #submitBtn:hover {
+            background-color: #0056b3;
+        }
+
+        #result {
+            margin-top: 20px;
+            text-align: left;
+        }
+
+        .link-item {
+            display: block;
+            margin-top: 10px;
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+
+        .link-item a {
+            color: #007bff;
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+
+        .link-item a:hover {
+            color: #0056b3;
+        }
+
+        .circular-progress {
+            margin-top: 20px;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .circular-progress-message {
+            margin-top: 10px;
+            font-weight: bold;
+        }
+
+        .circular-progress-bar {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #007bff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 2s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="top-menu">
+        <a href="/">Home</a>
+        <a href="/upload">Upload Page</a>
+    </div>
+    <div class="container">
+        <h1>Perform OCR</h1>
+        <form id="ocrForm">
+            <input type="text" id="searchQuery" placeholder="Enter search query">
+            <button type="submit" id="submitBtn">Search and Perform OCR</button>
+        </form>
+        <div class="circular-progress" id="circularProgress">
+            <div class="circular-progress-bar"></div>
+            <div class="circular-progress-message">Performing OCR on all documents...</div>
+        </div>
+        <div id="result"></div>
+    </div>
+    <script>
+        const ocrForm = document.getElementById('ocrForm');
+        const circularProgress = document.getElementById('circularProgress');
+        const circularProgressBar = document.querySelector('.circular-progress-bar');
+        const circularProgressMessage = document.querySelector('.circular-progress-message');
+    
+        ocrForm.addEventListener('submit', async function(event) {
+            event.preventDefault();
+    
+            ocrForm.style.display = 'none';
+            circularProgress.style.display = 'flex';
+    
+            const searchQuery = document.getElementById('searchQuery').value;
+            const response = await fetch('/perform-ocr', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ searchQuery })
+            });
+    
+            const categorizedLinks = await response.json();
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '';
+    
+            circularProgress.style.display = 'none';
+            ocrForm.style.display = 'block';
+    
+            for (const category in categorizedLinks) {
+                const categoryLinks = categorizedLinks[category];
+    
+                const categoryDiv = document.createElement('div');
+                categoryDiv.className = 'category';
+    
+                const categoryHeading = document.createElement('h2');
+                categoryHeading.textContent = category;
+                categoryDiv.appendChild(categoryHeading);
+    
+                const categoryItems = document.createElement('div');
+                categoryItems.className = 'category-items';
+    
+                if (categoryLinks.length > 0) {
+                    categoryLinks.forEach(linkInfo => {
+                        const linkItem = document.createElement('div');
+                        linkItem.className = 'link-item';
+                        const linkElement = document.createElement('a');
+                        linkElement.href = linkInfo.signed_url;
+                        linkElement.target = '_blank';
+                        linkElement.textContent = linkInfo.file_name.split('/').pop();;
+                        linkItem.appendChild(linkElement);
+                        categoryItems.appendChild(linkItem);
+                    });
+                } else {
+                    const noFileFoundDiv = document.createElement('div');
+                    noFileFoundDiv.textContent = `No ${category} File Found`;
+                    categoryItems.appendChild(noFileFoundDiv);
+                }
+    
+                categoryDiv.appendChild(categoryItems);
+                resultDiv.appendChild(categoryDiv);
+            }
+        });
+    </script>
+</body>
+</html>
