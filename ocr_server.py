@@ -11,13 +11,14 @@ from concurrent.futures import ThreadPoolExecutor  # Import ThreadPoolExecutor f
 from sentence_transformers import SentenceTransformer, util
 import re
 from fuzzywuzzy import fuzz
-import pytessFueract
+import pytesseract
 from PIL import Image, ImageEnhance, ImageFilter
 
 
 model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
+ocr_cache = {}
 # Initialize the Flask app and Firebase
-app = Flask(__name__)
+app = Flask(__name__, template_folder='templates')
 cred = credentials.Certificate('./ocrscanner-887f5-firebase-adminsdk-rejm0-d4d6480be1.json')
 firebase_admin.initialize_app(cred, {'storageBucket': 'ocrscanner-887f5.appspot.com'})
 bucket = storage.bucket()
@@ -37,6 +38,56 @@ def ocr():
 def upload():
     return render_template('upload.html')
 
+@app.route('/adminlogin')
+def admin_login():
+    return render_template('adminlogin.html')
+
+@app.route('/userlogin')
+def user_login():
+    return render_template('userlogin.html')
+
+@app.route('/register')  # This route is for the "Register new User" page
+def user_register():
+    return render_template('register.html')
+
+@app.route('/adminhome')  # This route is for the "Register new User" page
+def admin_home():
+    return render_template('adminhome.html')
+
+@app.route('/userhome')  # This route is for the "Register new User" page
+def user_home():
+    return render_template('userhome.html')
+
+@app.route('/view-files')  # This route is for the "Register new User" page
+def allfiles():
+    return render_template('viewallfiles.html')
+
+@app.route('/view-all-files', methods=['GET'])
+def view_all_files():
+    # List the files in the Firebase Storage bucket
+    blobs = bucket.list_blobs()
+
+    # Create a list to store file information
+    file_info_list = []
+
+    for blob in blobs:
+        # Generate a signed URL for the file
+        signed_url = blob.generate_signed_url(
+            version='v4',
+            expiration=timedelta(hours=1),
+            method='GET'
+        )
+        
+        # Append file information to the list
+        file_info_list.append({
+            'file_name': blob.name,
+            'signed_url': signed_url
+        })
+
+    print("File Info List:", file_info_list)  # Add this line for debugging
+    
+    return jsonify(file_info_list)
+
 def preprocess_text(text):
     # Remove extra whitespaces and newlines
     text = ' '.join(text.split())
@@ -50,56 +101,78 @@ def enhance_image_ocr(image):
     enhanced_image = enhanced_image.filter(ImageFilter.SHARPEN)
     return enhanced_image
 
-def perform_ocr_on_image(image):
+def perform_ocr_on_image(image, languages):
     try:
         pytesseract.pytesseract.tesseract_cmd = '/opt/homebrew/bin/tesseract'  # Adjust the path if needed
         enhanced_image = enhance_image_ocr(image)
-        text = pytesseract.image_to_string(enhanced_image, lang='eng', config='--psm 6')
+        text = pytesseract.image_to_string(enhanced_image, lang=languages, config='--psm 6')
     except Exception as e:
         print("Error performing OCR:", e)
         text = ""
     return text
 
 
+
 # Function to perform enhanced OCR on a single file
-def perform_ocr_for_file(blob, search_query):
+def perform_ocr_for_file(blob, search_query, languages):
     file_name = blob.name
-    signed_url = blob.generate_signed_url(
-        version='v4',
-        expiration=timedelta(hours=1),
-        method='GET'
-    )
 
-    response = requests.get(signed_url)
-    file_data = response.content
-
-    if blob.content_type == 'application/pdf':
-        pdf = PdfReader(io.BytesIO(file_data))
-        text = ''
-        for page in pdf.pages:
-            text += page.extract_text()
-    elif blob.content_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
-        doc = Document(io.BytesIO(file_data))
-        text = ' '.join([para.text for para in doc.paragraphs])
-    elif blob.content_type.startswith('image/'):
-        try:
-            image = Image.open(io.BytesIO(file_data))
-            text = perform_ocr_on_image(image)
-        except Exception as e:
-            print("Error processing image:", e)
-            text = ""
+    # Check if the OCR result is already in the cache
+    if file_name in ocr_cache:
+        text = ocr_cache[file_name]
+        signed_url = None  # Set signed_url to None if the result is in the cache
     else:
-        text = ""
+        # If not in cache, perform OCR
+        signed_url = blob.generate_signed_url(
+            version='v4',
+            expiration=timedelta(hours=1),
+            method='GET'
+        )
 
-    text = preprocess_text(text)
+        response = requests.get(signed_url)
+        file_data = response.content
+
+        if blob.content_type == 'application/pdf':
+            pdf = PdfReader(io.BytesIO(file_data))
+            text = ''
+            for page in pdf.pages:
+                text += page.extract_text()
+        elif blob.content_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+            doc = Document(io.BytesIO(file_data))
+            text = ' '.join([para.text for para in doc.paragraphs])
+        elif blob.content_type.startswith('image/'):
+            try:
+                image = Image.open(io.BytesIO(file_data))
+                text = perform_ocr_on_image(image, languages)
+            except Exception as e:
+                print("Error processing image:", e)
+                text = ""
+        else:
+            text = ""
+
+        text = preprocess_text(text)
+
+        # Store the result in the cache
+        ocr_cache[file_name] = text.lower()
+
     return text.lower(), {
         'file_name': file_name,
         'signed_url': signed_url
     }
+def clear_ocr_cache():
+    global ocr_cache
+    ocr_cache = {}
+
+# Add a route to clear the cache
+@app.route('/clear-cache', methods=['GET'])
+def clear_cache():
+    clear_ocr_cache()
+    return "Cache cleared."
 
 @app.route('/perform-ocr', methods=['POST'])
 def perform_ocr():
     search_query = request.json['searchQuery']
+    languages = 'eng+hin+mar+guj'
     categorized_links = {
         'PDF': [],
         'WORD': [],
@@ -113,7 +186,7 @@ def perform_ocr():
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = []
         for blob in blobs:
-            futures.append(executor.submit(perform_ocr_for_file, blob, search_query))
+            futures.append(executor.submit(perform_ocr_for_file, blob, search_query, languages))
 
         for future in futures:
             text, link_data = future.result()
